@@ -1,0 +1,481 @@
+---
+title: "THYAO Prices Between 2014 - 2023"
+author: "Serhat Habil Çelik | 2361202"
+date: "December 2023"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+<span style="color:darkblue">**Packages To Be Used**</span> 
+
+```{r message=FALSE, warning=FALSE}
+library(anomalize)
+library(dplyr)
+library(FinTS)
+library(forecast)
+library(fpp2)
+library(fUnitRoots) 
+library(ggplot2)
+library(gridExtra)
+library(hrbrthemes)
+library(lmtest)
+library(lubridate)
+library(pdR)
+library(plotly)
+library(RColorBrewer)
+library(tibbletime)
+library(tidyverse)
+library(timetk)
+library(TSA)
+library(tseries)
+library(xts)
+```
+
+```{r}
+setwd("C:/Users/Cesur/Desktop")
+data <- read.csv("Project.csv")
+data <- data %>% select(Tarih,Açılış)
+data$Tarih <- as.Date(data$Tarih,format="%d.%m.%Y")
+data <- data[order(data$Tarih,decreasing = FALSE),]
+data[,2] <- as.numeric(gsub(",", ".", data[,2]))
+```
+
+```{r}
+dim(data)
+```
+
+The data consists of 7 columns and 109 rows. First column is Date. The others are continous variables.
+
+```{r}
+head(data)
+tail(data)
+```
+
+```{r}
+sum(is.na(data))
+```
+
+```{r}
+summary(data)
+```
+
+I will concentrate on Açılış columnn on my project.
+
+The source of data is https://tr.investing.com/equities/turk-hava-yollari-historical-data.
+
+Açılış variable varies with price of 4.820 ₺ to 255.50 ₺ Its mean is 35.12 ₺.
+
+```{r warning=FALSE}
+serhat <- data %>%
+  ggplot(aes(x= Tarih, y= Açılış)) +
+  geom_area(fill="blue", alpha=0.5) +
+  geom_line(color="black") +
+  ylab("THYAO Price") + 
+  labs(title="Turkish Airlines Price (THYAO) from 2014-12 to 2023-12")+
+  theme_ipsum()
+serhat <-  ggplotly(serhat)
+serhat
+```
+
+It is seen that there is an increasing trend at the graph. There is no seasonality in the data.
+
+<span style="color:darkblue">**Spliting Data**</span> 
+
+```{r}
+datap <- ts(data[,2],start = c(2014,12),end=c(2023,12),frequency = 12)
+train <- ts(datap[1:97], start = c(2014, 12), frequency = 12)
+test <- ts(datap[98:109],start=c(2023,1),end=c(2023,12),frequency = 12)
+```
+
+We split our data as train and test. Test shows that last 12 observation of the data.
+
+<span style="color:darkblue">**Anomalize Detection**</span> 
+
+```{r}
+df <- data[1:97,]
+df <- as_tibble(df)
+# df %>% 
+  #time_decompose(Açılış, method = "stl", frequency = "auto", trend = "auto") %>%
+  #anomalize(remainder,method = "gesd", alpha = 0.05, max_anoms = 0.2) %>%
+  #plot_anomaly_decomposition()
+```
+
+<span style="color:darkblue">**Box-Cox Transformation**</span> 
+
+```{r message=FALSE, warning=FALSE}
+BoxCox.ar(train,method = c("ols"))
+```
+
+```{r}
+lambda1 <- BoxCox.lambda(train)
+lambda1
+train_box <- BoxCox(train,lambda1)
+autoplot(train_box,"Transformed Time Series Plot Of THYAYO Price",color="darkblue") + theme_minimal()
+```
+
+We did Box-Cox transformation because lambda value equals to -0.44 which is not equal to 0. The series is not still *stationary.* because there is increasing and decreasing trend in series.
+
+
+```{r}
+library(RColorBrewer)
+rb<-brewer.pal(7,"Blues")
+par(mfrow=c(1,2))
+plot(train, col=rb[7], xlab = "Original Series", ylab="THYAO Price")
+plot(train_box, col=rb[4], xlab = "Differenced Series",  ylab="THYAO Price")  
+```
+
+Original VS Transformed
+
+```{r}
+p1<-ggAcf(train_box,lag.max = 96) + theme_minimal() + ggtitle("ACF Of Transformed Data")
+p2<-ggPacf(train_box,lag.max = 96)+ theme_minimal() + ggtitle("PACF Of Transformed Data")
+grid.arrange(p1,p2,ncol=2)
+```
+
+As it is seen that, there is a slow decay in ACF graph, meaning that the series is not stationary. There is no need to check PACF.
+
+<span style="color:darkblue">**Unit - Root Tests**</span> 
+
+
+```{r}
+kpss.test(train_box,null="Level")
+kpss.test(train_box,null="Trend")
+```
+
+The p - value of KPSS Test for Level Stationary is 0.01 < 0.05. Therefore, we reject H~0~ and we can conclude that the series is not stationary. In addition, The p - value of KPSS Test for Trend Stationary is 0.0412 < 0.05. Hence, we can say that the series has stochastic trend. We need to take difference to remove stochastic trend.
+
+```{r}
+pp.test(train_box)
+```
+
+Since p value is greater than α=0.05 , we fail to reject H~0~ . It means that we don’t have enough evidence to claim that we have a stationary system.
+
+```{r}
+mean(train_box)
+```
+
+The mean of stock prices is not 0 or close to 0. In such cases, we will prefer to use ADF test with c
+
+```{r}
+adfTest(train_box, lags=1, type="c") 
+```
+
+Since p value is greater than α=0.05 , we fail to reject H~0~ = The series is not stationary
+It means that the series is not stationary.
+
+```{r}
+adfTest(train_box, lags=1, type="ct") 
+```
+
+Since p value is greater than α=0.05 , we fail to reject H~0~. It means that we have non stationary system having stochastic trend.
+
+```{r}
+ndiffs(train_box)
+```
+
+It is enough to take 1 difference for the series to make stationary.
+
+```{r}
+diff_train <- diff(train_box)
+```
+
+It seems stationary after taking difference. Let's check it with unit root tests.
+
+```{r}
+kpss.test(diff_train,null="Level")
+```
+
+P - value of KPSS test is 0.09851 which is higher than 0.05, so we cannot reject null hypothesis (H~0~) and we can conclude that the differenced series are stationary.
+
+```{r}
+adfTest(diff_train, type="nc")
+```
+
+It is enough to check adftest with "nc" because we made the constant part zero. Since its p value < 0.05, the series is stationary.
+
+```{r}
+pp.test(diff_train)
+```
+
+Since p value is less than α, we reject H~0~. We can conclude that the differenced series is stationary.
+
+```{r}
+autoplot(diff_train,main="Time Series Plot of the One - Differenced Data",xlab="THYAO Price",col="blue")
+
+```
+
+```{r}
+p3<-ggAcf(diff_train,lag.max = 96) + theme_minimal() + ggtitle("ACF Of One - Differenced Data")
+p4<-ggPacf(diff_train,lag.max = 96)+ theme_minimal() + ggtitle("PACF Of One - Differenced Data")
+grid.arrange(p3,p4,ncol=2)
+```
+
+The series become stationary after taking one difference. Since there is no seasonality in the data, there is no need to check HEGY.TEST. One differencing is enough. I will suggest a model according to results of ACP-PACF graphs.
+
+We can suggest $ARIMA(0,1,0)$ called as random walk.
+We can also suggest $ARIMA(7,1,7)$ .
+
+
+```{r}
+fit1 <-Arima(train_box,order = c(0,1,0), seasonal = c(0, 0,0))
+fit1
+```
+
+```{r}
+fit2 <-Arima(train_box,order = c(7,1,7), seasonal = c(0, 0,0))
+fit2
+```
+
+Since $\phi_7$ and $\theta_7$ are significant, $ARIMA(7,1,7)$ is appropriate.
+
+
+```{r}
+a<-fit1$aic
+b<-fit1$bic
+c<-fit2$aic
+d<-fit2$bic
+cat("Model 1 AIC:", a, ", Model 1 BIC:", b, "\n")
+cat("Model 2 AIC:", c, ", Model 2 BIC:", d, "\n")
+```
+
+Since AIC and BIC of fit 1 is smaller than fit 2, we choose $ARIMA(0,1,0)$.
+
+```{r}
+auto.arima(train_box)
+```
+
+Also, auto.arima suggests ARIMA (0,1,0) for the series.
+
+<span style="color:darkblue">**Diagnostic Checking**</span> 
+
+
+*Jarque Bera and Shapiro Test*
+
+```{r}
+r1=resid(fit1)/sd(residuals(fit1))
+```
+
+```{r}
+jarque.bera.test(r1)
+```
+
+```{r}
+shapiro.test(r1)
+```
+
+Since p value is bigger than alpha(0.05) , we reject H~0~. Hence, Normality Assumption is satisfied. 
+
+Let's check the QQ - Plot of it.
+
+```{r message=FALSE, warning=FALSE}
+ggplot(r1, aes(sample = r1)) +stat_qq()+geom_qq_line(col="red")+ggtitle("QQ Plot of the Residuals")+theme_minimal()
+```
+
+*Breusch-Godfrey Test*
+
+```{r}
+m = lm(r1 ~ 1+zlag(r1))
+```
+
+```{r}
+bgtest(m,order=12) 
+```
+
+Since p - value is greater than alpha(0.05), we have 95% confident that the residuals of the model are uncorrelated, according to the result of Breusch-Godfrey Test.
+
+*ARCH Engle's Test*
+
+```{r}
+ArchTest(r1)
+```
+
+Since p value = 0.6493 > 0.05 , we fail to reject H~0~. Hence, we can say that there is no presence of ARCH effects.
+Therefore, e do not need to use ARCH and GARCH model.
+
+<span style="color:darkblue">**Forecasting**</span>
+
+*Back - Transformation*
+```{r}
+f<-forecast(fit1,h=12)
+accuracy(f,test)
+accuracy(f,test)[1,7]
+
+```
+
+Forecast values are produced with respect to transformed data here. We should apply *Back-Transformation*.
+
+```{r}
+back<-exp(f$mean)
+accuracy(back,test)
+```
+
+```{r}
+het <- resid(fit1)/sd(residuals(fit1))
+hete <- het^2
+g1<-ggAcf(as.vector(hete),lag.max = 72)+theme_minimal()+ggtitle("ACF of Squared Residuals")
+g2<-ggPacf(as.vector(hete),lag.max = 72)+theme_minimal()+ggtitle("PACF of Squared Residuals")
+grid.arrange(g1,g2,ncol=2)
+
+```
+
+Homoscedasticity is checked in the code above. Almost all spikes are in of the white noise bands that is an indication of homoscedasticity.
+
+<span style="color:darkblue">**Modelling**</span>
+
+<span style="color:orange">**ETS**</span> 
+
+```{r message=FALSE, warning=FALSE}
+fitnew=ets(train,model="ZZZ")
+fitnew
+Fr1=forecast(fitnew,h=12)
+autoplot(Fr1) + autolayer(fitted(Fr1),series="fitted")+theme_minimal()
+```
+
+*Normality Checking for ETS*
+```{r}
+r=resid(fitnew)/sd(residuals(fitnew))
+jarque.bera.test(r)
+```
+
+Since p - value is bigger than alpha (0.05) , we reject H~0~. Hence, Normality Assumption is satisfied. 
+
+*Accuracy Test*
+```{r}
+accuracy(Fr1,test)
+```
+
+<span style="color:orange">**TBATS**</span> 
+
+```{r}
+tbatsmodel<-tbats(train)
+tbatsmodel
+```
+
+```{r}
+autoplot(train,main="TS plot of Train with TBATS Fitted") + autolayer(fitted(tbatsmodel), series="Fitted") +theme_minimal()
+```
+
+```{r}
+tbats_forecast<-forecast(tbatsmodel,h=12)
+autoplot(tbats_forecast)+theme_minimal()
+```
+
+*Normality Checking for TBATS*
+```{r}
+rr=resid(tbatsmodel)/sd(residuals(tbatsmodel))
+jarque.bera.test(rr)
+```
+
+Since p - value is bigger than alpha (0.05) , we reject H~0~. Hence, Normality Assumption is satisfied. 
+
+*Accuracy Test*
+```{r}
+accuracy(tbats_forecast,test)
+```
+
+
+<span style="color:orange">**NNETAR**</span> 
+
+```{r}
+nnet_for <- nnetar(train,P=0)
+nnet_for
+fcast <- forecast(nnet_for,h=12)
+autoplot(fcast) + autolayer(fitted(fcast),series="fitted")+theme_minimal()
+```
+
+
+*Normality Checking for NNETAR*
+```{r}
+shapiro.test(residuals(nnet_for))
+```
+
+Since p - value is smaller than alpha (0.05) , we reject H~0~. Hence, Normality Assumption is not satisfied.
+
+*Accuracy Test*
+```{r}
+accuracy(fcast,test)
+```
+
+
+*Comparing Train*
+
+```{r}
+etsac <- accuracy(Fr1,test)[1, 1:5]
+tbatsac <- accuracy(tbats_forecast,test)[1, 1:5]
+nnetarac <- accuracy(fcast,test)[1, 1:5]
+arimaac <- accuracy(f,test)[1, 1:5]
+
+etsac <- as.data.frame(etsac)
+nnetarac <- as.data.frame(nnetarac)
+tbatsac <- as.data.frame(tbatsac)
+arimaac <- as.data.frame(arimaac)
+
+ets7 <- accuracy(Fr1, test)[1,7]
+tbats7 <- accuracy(tbats_forecast,test)[1,7]
+nnetar7 <- accuracy(fcast,test)[1,7]
+arima7 <- accuracy(f,test)[1,7]
+
+ets7 <- as.data.frame(ets7)
+tbats7 <- as.data.frame(tbats7)
+nnetar7 <- as.data.frame(nnetar7)
+arima7 <- as.data.frame(arima7)
+
+acf_train <- cbind(etsac,nnetarac,tbatsac,arimaac)
+acf7 <- cbind(ets7,tbats7,nnetar7,arima7)
+colnames(acf7) <- c("etsac","nnetarac","tbatsac","arimaac")
+accuracycompare <- rbind(acf_train, acf7)
+
+colnames(accuracycompare) <- c("ETS","TBATS","NNETAR","ARIMA")
+rownames(accuracycompare) <- c('ME', 'RMSE', 'MAE', 'MPE', 'MAPE', 'ACF1')
+round(accuracycompare,2)
+```
+
+According to accuracy of train values, the best model is **ARIMA** with the lowest values.
+
+*Comparing Forecast*
+
+```{r}
+etstr <- accuracy(Fr1,test)[2, 1:5]
+tbatstr <- accuracy(tbats_forecast,test)[2, 1:5]
+nnetartr <- accuracy(fcast, test)[2, 1:5]
+arimatr <- accuracy(f,test)[2, 1:5]
+
+etstr <- as.data.frame(etstr)
+tbatstr <- as.data.frame(tbatstr)
+nnetartr <- as.data.frame(nnetartr)
+arimatr <- as.data.frame(arimatr)
+  
+etstr7 <- accuracy(Fr1,test)[2, 7]
+tbatstr7 <- accuracy(tbats_forecast,test)[2, 7]
+nnetartr7 <- accuracy(fcast, test)[2, 7]
+arimatr7 <- accuracy(back,test)[7]
+
+etstr7<- as.data.frame(etstr7)
+tbatstr7 <- as.data.frame(tbatstr7)
+nnetartr7 <- as.data.frame(nnetartr7)
+arimatr7 <- as.data.frame(arimatr7)
+
+acf_test <- cbind(etstr,tbatstr,nnetartr,arimatr)
+acf7_test <- cbind(etstr7,tbatstr7,nnetartr7,arimatr7)
+colnames(acf7_test) <- c("etstr","tbatstr","nnetartr","arimatr")
+accuracytestcompare <- rbind(acf_test, acf7_test)
+
+colnames(accuracytestcompare) <- c("ETS","TBATS","NNETAR","ARIMA")
+rownames(accuracytestcompare) <- c('ME', 'RMSE', 'MAE', 'MPE', 'MAPE', 'ACF1')
+round(accuracytestcompare,2)
+```
+
+According to accuracy of forecasting values, the best model is **ETS with** lowest RMSE and AICF.
+
+```{r}
+clrs <- c("green", "red", "blue")
+autoplot(Fr1) +
+  autolayer(Fr1$mean, series = "Forecast", size = 1) +
+  autolayer(fitted(fitnew), series = "Fitted", size = 1) +
+  autolayer(datap, series ="Data", size = 1) +
+  ylab("") +
+  scale_color_manual(values = clrs )  + geom_vline(xintercept = 2023+(01-1)/12)
+
+```
+
